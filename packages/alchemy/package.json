@@ -354,6 +354,11 @@
       "worker": "./src/Util/PlatformServices.ts",
       "import": "./lib/Util/PlatformServices.js"
     },
+    "./Varlock": {
+      "types": "./lib/Varlock.d.ts",
+      "bun": "./src/Varlock.ts",
+      "import": "./lib/Varlock.js"
+    },
     "./bin/alchemy.js": "./bin/alchemy.js",
     "./bin/exec.ts": "./bin/exec.ts",
     "./bin/exec.js": "./bin/exec.js"
@@ -451,6 +456,7 @@
     "tsx": "^4.20.6",
     "typescript": "catalog:",
     "uuid": "catalog:",
+    "varlock": "catalog:",
     "vitest": "catalog:",
     "waku": "catalog:frameworks",
     "wrangler": "catalog:",
@@ -469,6 +475,7 @@
     "mongodb": "^6.10.0",
     "mysql2": "^3.15.3",
     "pg": "^8.13.0",
+    "varlock": "catalog:",
     "vite": "catalog:",
     "ws": "catalog:"
   },
@@ -504,6 +511,9 @@
       "optional": true
     },
     "pg": {
+      "optional": true
+    },
+    "varlock": {
       "optional": true
     },
     "vite": {

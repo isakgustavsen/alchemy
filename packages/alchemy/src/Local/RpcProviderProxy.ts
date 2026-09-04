@@ -9,6 +9,7 @@ import * as HttpClient from "effect/unstable/http/HttpClient";
 import { AlchemyContext } from "../AlchemyContext.ts";
 import type { ProviderService } from "../Provider.ts";
 import type { ResourceLike } from "../Resource.ts";
+import { getStackSecretsEnvironment } from "../SecretsEnvironment.ts";
 import { Stack } from "../Stack.ts";
 import { unwrapRpcHandlers } from "./RpcSerialization.ts";
 import type { RpcProxyApi } from "./RpcServer.ts";
@@ -33,10 +34,12 @@ const make = Effect.fn(function* (spawnerUrl: string) {
     function* (serverEntryUrl: string) {
       const alchemyContext = yield* AlchemyContext;
       const stack = yield* Stack;
+      const resolvedEnvironment = getStackSecretsEnvironment(stack);
       const payload: RpcSpawnPayload = {
         serverEntryUrl,
         alchemyContext,
         stack: { name: stack.name, stage: stack.stage },
+        ...(resolvedEnvironment !== undefined ? { resolvedEnvironment } : {}),
       };
       const response = yield* client.post(spawnerUrl, {
         body: yield* HttpBody.json(payload),

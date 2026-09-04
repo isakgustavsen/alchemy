@@ -12,7 +12,10 @@ import { Stage } from "../../Stage.ts";
 import * as State from "../../State/index.ts";
 import { encodeState } from "../../State/StateEncoding.ts";
 import * as Clank from "../../Util/Clank.ts";
-import { loadConfigProvider } from "../../Util/ConfigProvider.ts";
+import {
+  loadStackConfigProvider,
+  secretsEnvironmentLayer,
+} from "../../Util/ConfigProvider.ts";
 import { fileLogger } from "../../Util/FileLogger.ts";
 
 import {
@@ -72,15 +75,15 @@ const withStateService = <A, E>(
 ) =>
   Effect.gen(function* () {
     const stackEffect = yield* importStack(args.main);
+    const config = yield* loadStackConfigProvider(
+      stackEffect.secrets,
+      args.envFile,
+    );
 
     const services = Layer.mergeAll(
       Layer.succeed(AuthProviders, {}),
-      ConfigProvider.layer(
-        withProfileOverride(
-          yield* loadConfigProvider(args.envFile),
-          args.profile,
-        ),
-      ),
+      ConfigProvider.layer(withProfileOverride(config.provider, args.profile)),
+      secretsEnvironmentLayer(config),
       Logger.layer([fileLogger("out")], { mergeWithExisting: true }),
       Layer.succeed(Stage, "placeholder"),
       // When --local is set we still build the stack to get its other

@@ -93,6 +93,25 @@ describe(`Local.RpcSpawner (runtime=${typeof globalThis.Bun !== "undefined" ? "b
   );
 
   it.live(
+    "forwards a resolved secrets environment to the sidecar ConfigProvider",
+    () =>
+      Effect.gen(function* () {
+        const url = yield* RpcSpawner.useSync((spawner) => spawner.url);
+        const payload = {
+          ...samplePayload(FIXTURE_TS_URL),
+          resolvedEnvironment: {
+            ALCHEMY_SIDECAR_PLUGIN_TOKEN: "resolved-by-plugin",
+          },
+        };
+        const wsUrl = yield* post(url, payload);
+        expect(
+          yield* configWebSocket(wsUrl, "ALCHEMY_SIDECAR_PLUGIN_TOKEN"),
+        ).toBe("resolved-by-plugin");
+      }).pipe(Effect.provide(services)),
+    { timeout: 60_000 },
+  );
+
+  it.live(
     "distinct payloads spawn distinct children with distinct urls",
     () =>
       Effect.gen(function* () {
@@ -210,5 +229,23 @@ const echoWebSocket = (
         echo: (m: string) => Effect.Effect<string>;
       };
       return await Effect.runPromise(handlers.echo(msg));
+    });
+  }).pipe(Effect.scoped);
+
+const configWebSocket = (
+  rpcUrl: string,
+  key: string,
+): Effect.Effect<string, Error> =>
+  Effect.gen(function* () {
+    yield* openWebSocket(new URL("/parent", rpcUrl));
+    return yield* Effect.promise(async () => {
+      const stub = newWebSocketRpcSession(
+        rpcUrl,
+      ) as unknown as RpcStub<RpcProxyApi>;
+      const provider = await stub.getProvider("Test.Echo");
+      const handlers = unwrapRpcHandlers(provider as any) as {
+        config: (key: string) => Effect.Effect<string>;
+      };
+      return await Effect.runPromise(handlers.config(key));
     });
   }).pipe(Effect.scoped);

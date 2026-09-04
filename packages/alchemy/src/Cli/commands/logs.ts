@@ -10,7 +10,10 @@ import { findProviderByType, type LogLine } from "../../Provider.ts";
 import { stampedMode } from "../../ProviderMode.ts";
 import { Stage } from "../../Stage.ts";
 import * as State from "../../State/index.ts";
-import { loadConfigProvider } from "../../Util/ConfigProvider.ts";
+import {
+  loadStackConfigProvider,
+  secretsEnvironmentLayer,
+} from "../../Util/ConfigProvider.ts";
 import { fileLogger } from "../../Util/FileLogger.ts";
 
 import { AuthProviders } from "../../Auth/AuthProvider.ts";
@@ -73,11 +76,14 @@ export const logsCommand = Command.make(
       since,
     }) {
       const stackEffect = yield* importStack(main);
+      const config = yield* loadStackConfigProvider(
+        stackEffect.secrets,
+        envFile,
+      );
 
       const services = Layer.mergeAll(
-        ConfigProvider.layer(
-          withProfileOverride(yield* loadConfigProvider(envFile), profile),
-        ),
+        ConfigProvider.layer(withProfileOverride(config.provider, profile)),
+        secretsEnvironmentLayer(config),
         Layer.succeed(AuthProviders, {}),
         Layer.succeed(Stage, stage),
         Logger.layer([fileLogger("out")], { mergeWithExisting: true }),

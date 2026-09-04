@@ -36,7 +36,7 @@ export class RpcSpawner extends Context.Service<
 
 export interface RpcSpawnPayload extends Pick<
   RpcServerEnvironment,
-  "alchemyContext" | "stack"
+  "alchemyContext" | "stack" | "resolvedEnvironment"
 > {
   serverEntryUrl: string;
 }
@@ -96,6 +96,7 @@ export const make = Effect.fn(function* ({
     serverEntryUrl,
     alchemyContext,
     stack,
+    resolvedEnvironment,
   }: RpcSpawnPayload) {
     const bin = typeof globalThis.Bun !== "undefined" ? "bun" : "node";
     const main = fileURLToPath(serverEntryUrl);
@@ -104,6 +105,7 @@ export const make = Effect.fn(function* ({
       envFile,
       alchemyContext,
       stack,
+      resolvedEnvironment,
     };
     const command = ChildProcess.make(
       bin,

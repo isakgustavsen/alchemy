@@ -15,6 +15,8 @@ export interface RpcServerEnvironment {
   alchemyContext: AlchemyContext["Service"];
   profile: string | undefined;
   envFile: string | undefined;
+  /** Resolved custom stack configuration forwarded by the exec process. */
+  resolvedEnvironment?: Readonly<Record<string, string>>;
   stack: {
     name: string;
     stage: string;
@@ -23,13 +25,23 @@ export interface RpcServerEnvironment {
 
 export type RpcEnvironmentServices = Layer.Success<ReturnType<typeof layer>>;
 
+const configProvider = (environment: RpcServerEnvironment) =>
+  environment.resolvedEnvironment === undefined
+    ? loadConfigProvider(Option.fromNullishOr(environment.envFile))
+    : Effect.succeed(
+        ConfigProvider.orElse(
+          ConfigProvider.fromEnv({ env: environment.resolvedEnvironment }),
+          ConfigProvider.fromEnv(),
+        ),
+      );
+
 export const layer = (environment: RpcServerEnvironment) =>
   Layer.mergeAll(
     ProfileLive,
     CredentialsStoreLive,
     Layer.succeed(AuthProviders, {}),
     ConfigProvider.layer(
-      loadConfigProvider(Option.fromNullishOr(environment.envFile)).pipe(
+      configProvider(environment).pipe(
         Effect.map((base) => withProfileOverride(base, environment.profile)),
       ),
     ),

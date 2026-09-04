@@ -33,6 +33,7 @@ export * as RemovalPolicy from "./RemovalPolicy.ts";
 export { renamedFrom } from "./Rename.ts";
 export * from "./Resource.ts";
 export * as Schema from "./Schema.ts";
+export * from "./Secrets.ts";
 export * as Server from "./Server/index.ts";
 export * as Serverless from "./Serverless/index.ts";
 export { Stack } from "./Stack.ts";

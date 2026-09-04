@@ -30,11 +30,16 @@ import { GitHubAuth } from "../../GitHub/AuthProvider.ts";
 import { NeonAuth } from "../../Neon/AuthProvider.ts";
 import { PlanetscaleAuth } from "../../Planetscale/AuthProvider.ts";
 import { PrismaAuth } from "../../Prisma/AuthProvider.ts";
+import type { SecretsResolver } from "../../Secrets.ts";
 import * as Stack from "../../Stack.ts";
 import { Stage } from "../../Stage.ts";
 import { recordCli } from "../../Telemetry/Metrics.ts";
 import { PromptCancelled } from "../../Util/Clank.ts";
-import { loadConfigProvider } from "../../Util/ConfigProvider.ts";
+import {
+  loadConfigProvider,
+  loadStackConfigProvider,
+  secretsEnvironmentLayer,
+} from "../../Util/ConfigProvider.ts";
 import { fileLogger } from "../../Util/FileLogger.ts";
 
 export const USER = Config.string("USER").pipe(
@@ -364,6 +369,7 @@ export const importStack = Effect.fn(function* (main: string) {
     stage: string;
     providers: Layer.Layer<never>;
     state: Layer.Layer<never>;
+    secrets?: SecretsResolver;
   };
 });
 
@@ -425,10 +431,11 @@ export const buildStackProviders = Effect.fn("buildStackProviders")(function* (
 ) {
   const authProviders = options.registry ?? {};
   const stackEffect = yield* importStack(options.main);
-  const configProvider = withProfileOverride(
-    yield* loadConfigProvider(options.envFile),
-    options.profile,
+  const config = yield* loadStackConfigProvider(
+    stackEffect.secrets,
+    options.envFile,
   );
+  const configProvider = withProfileOverride(config.provider, options.profile);
   const context = yield* Layer.build(
     (stackEffect.providers ?? Layer.empty).pipe(
       Layer.provideMerge(stackEffect.state ?? Layer.empty),
@@ -436,6 +443,7 @@ export const buildStackProviders = Effect.fn("buildStackProviders")(function* (
         Layer.mergeAll(
           Layer.succeed(AuthProviders, authProviders),
           ConfigProvider.layer(configProvider),
+          secretsEnvironmentLayer(config),
           options.logger ??
             Logger.layer([fileLogger("out")], { mergeWithExisting: true }),
           Layer.succeed(Stage, "placeholder"),

@@ -22,9 +22,17 @@ import type { Input, InputProps } from "./Input.ts";
 import * as Output from "./Output.ts";
 import type { Provider, ProviderCollectionLike } from "./Provider.ts";
 import type { ResourceBinding, ResourceLike } from "./Resource.ts";
+import {
+  SecretsEnvironment,
+  setStackSecretsEnvironment,
+} from "./SecretsEnvironment.ts";
+import type { SecretsResolver } from "./Secrets.ts";
 import { Stage } from "./Stage.ts";
 import type { State } from "./State/State.ts";
-import { loadConfigProvider } from "./Util/ConfigProvider.ts";
+import {
+  loadStackConfigProvider,
+  secretsEnvironmentLayer,
+} from "./Util/ConfigProvider.ts";
 import { effectClass, taggedFunction } from "./Util/effect.ts";
 import { fileLogger } from "./Util/FileLogger.ts";
 import { PlatformServices } from "./Util/PlatformServices.ts";
@@ -89,6 +97,14 @@ export type Stack = Context.ServiceClass.Shape<
 export interface StackProps<Req> {
   providers: Layer.Layer<Extract<Req, ProviderServices>, never, StackServices>;
   state: Layer.Layer<State, never, StackServices>;
+  /** Optional source for stack secrets and configuration. */
+  secrets?: SecretsResolver;
+}
+
+/** Metadata retained on a stack definition before it is evaluated. */
+export interface StackDefinitionMetadata {
+  readonly stackName: string;
+  readonly secrets?: SecretsResolver;
 }
 
 export const Stack: Context.ServiceClass<
@@ -111,30 +127,32 @@ export const Stack: Context.ServiceClass<
       stackName: string,
       options: StackProps<NoInfer<Req>>,
       eff: Effect.Effect<A, ConfigError, Req>,
-    ): Effect.Effect<Self, ConfigError> & {
-      new (_: never): A extends object ? A : {};
-      stage: {
-        [stage: string]: Effect.Effect<Self>;
+    ): Effect.Effect<Self, ConfigError> &
+      StackDefinitionMetadata & {
+        new (_: never): A extends object ? A : {};
+        stage: {
+          [stage: string]: Effect.Effect<Self>;
+        };
       };
-    };
   };
   <Self, Shape>(): {
-    (stackName: string): Effect.Effect<Self> & {
-      new (_: never): Output.ToOutput<Shape>;
-      make: <A, Req>(
-        options: StackProps<NoInfer<Req>>,
-        effect: Effect.Effect<A, ConfigError, Req>,
-      ) => Effect.Effect<CompiledStack<A>, ConfigError>;
-      stage: {
-        [stage: string]: Effect.Effect<Self>;
+    (stackName: string): Effect.Effect<Self> &
+      StackDefinitionMetadata & {
+        new (_: never): Output.ToOutput<Shape>;
+        make: <A, Req>(
+          options: StackProps<NoInfer<Req>>,
+          effect: Effect.Effect<A, ConfigError, Req>,
+        ) => Effect.Effect<CompiledStack<A>, ConfigError>;
+        stage: {
+          [stage: string]: Effect.Effect<Self>;
+        };
       };
-    };
   };
   <A, Req extends StackServices | ProviderServices = never>(
     stackName: string,
     options: StackProps<NoInfer<Req>>,
     eff: Effect.Effect<A, ConfigError, Req>,
-  ): Effect.Effect<CompiledStack<A>, ConfigError>;
+  ): Effect.Effect<CompiledStack<A>, ConfigError> & StackDefinitionMetadata;
 } = Object.assign(
   taggedFunction(
     Context.Service<Stack, Omit<StackSpec, "output">>()("Stack"),
@@ -153,6 +171,7 @@ export const Stack: Context.ServiceClass<
               stage: createStageProxy(stackName),
               state: options?.state,
               providers: options?.providers,
+              secrets: options?.secrets,
               make: <Req = never>(
                 options: StackProps<NoInfer<Req>>,
                 eff: Effect.Effect<A, ConfigError, Req>,
@@ -174,6 +193,7 @@ export const Stack: Context.ServiceClass<
             stage: createStageProxy(stackName),
             state: options?.state,
             providers: options?.providers,
+            secrets: options?.secrets,
           }),
       );
     },
@@ -218,6 +238,7 @@ export interface MakeStackProps<ROut = never> {
   name: string;
   providers: Layer.Layer<ROut, never, StackServices>;
   state: Layer.Layer<State, never, StackServices>;
+  secrets?: SecretsResolver;
   /** @internal */
   stack?: StackSpec;
 }
@@ -226,9 +247,17 @@ export const make =
   <ROut = never>(options: MakeStackProps<ROut>) =>
   <A, Err = never, Req extends ROut | StackServices = never>(
     effect: Effect.Effect<A, Err, Req>,
-  ) =>
-    Effect.scope.pipe(
-      Effect.flatMap((scope) => {
+  ) => {
+    const ambientSecretsEnvironment = Effect.context<never>().pipe(
+      Effect.map((context) => Context.getOption(context, SecretsEnvironment)),
+    );
+    return ambientSecretsEnvironment.pipe(
+      Effect.flatMap((secretsEnvironment) =>
+        Effect.scope.pipe(
+          Effect.map((scope) => ({ scope, secretsEnvironment })),
+        ),
+      ),
+      Effect.flatMap(({ scope, secretsEnvironment }) => {
         if (options.state == null) {
           return Effect.die(
             new Error(
@@ -274,9 +303,10 @@ export const make =
             ),
           ),
           Layer.buildWithScope(scope),
+          Effect.map((context) => ({ context, secretsEnvironment })),
         );
       }),
-      Effect.flatMap((context) =>
+      Effect.flatMap(({ context, secretsEnvironment }) =>
         Effect.all([
           effect,
           Stack,
@@ -286,16 +316,24 @@ export const make =
             ([output, stack, services]): CompiledStack<
               A,
               ROut | StackServices
-            > => ({
-              ...stack,
-              output,
-              services: Context.merge(services, context),
-            }),
+            > => {
+              const compiled = {
+                ...stack,
+                output,
+                services: Context.merge(services, context),
+              };
+              if (Option.isSome(secretsEnvironment)) {
+                setStackSecretsEnvironment(stack, secretsEnvironment.value);
+                setStackSecretsEnvironment(compiled, secretsEnvironment.value);
+              }
+              return compiled;
+            },
           ),
           Effect.provideContext(context),
         ),
       ),
     );
+  };
 
 export const CurrentStack = Effect.serviceOption(Stack)
 
@@ -342,13 +380,24 @@ export const evalStack = <A, B, StackErr, Err, Req>(
   },
 ) => {
   const body = Effect.gen(function* () {
-    const stack = yield* effect;
-    const configProvider = yield* loadConfigProvider(Option.none());
+    const resolution = yield* loadStackConfigProvider(
+      (
+        effect as typeof effect & {
+          readonly secrets?: SecretsResolver;
+        }
+      ).secrets,
+      Option.none(),
+    );
+    const configLayer = Layer.merge(
+      Layer.succeed(ConfigProvider, resolution.provider),
+      secretsEnvironmentLayer(resolution),
+    );
+    const stack = yield* effect.pipe(Effect.provide(configLayer));
 
     return yield* fn(stack).pipe(
       provideFreshArtifactStore,
       Effect.provide(stack.services),
-      Effect.provide(Layer.succeed(ConfigProvider, configProvider)),
+      Effect.provide(configLayer),
     );
   }).pipe(
     Effect.provide(

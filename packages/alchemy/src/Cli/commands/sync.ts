@@ -13,7 +13,10 @@ import { withProfileOverride } from "../../Auth/Profile.ts";
 import * as CLI from "../../Cli/Cli.ts";
 import { Stage } from "../../Stage.ts";
 import * as Sync from "../../Sync.ts";
-import { loadConfigProvider } from "../../Util/ConfigProvider.ts";
+import {
+  loadStackConfigProvider,
+  secretsEnvironmentLayer,
+} from "../../Util/ConfigProvider.ts";
 import { fileLogger } from "../../Util/FileLogger.ts";
 
 import {
@@ -51,6 +54,7 @@ export const execSync = Effect.fn(function* ({
   yes = false,
 }: SyncArgs) {
   const stackEffect = yield* importStack(main);
+  const config = yield* loadStackConfigProvider(stackEffect.secrets, envFile);
 
   const services = Layer.mergeAll(
     Layer.succeed(AdoptPolicy, false),
@@ -61,9 +65,8 @@ export const execSync = Effect.fn(function* ({
         Effect.map(Option.getOrElse(() => ({}))),
       ),
     ),
-    ConfigProvider.layer(
-      withProfileOverride(yield* loadConfigProvider(envFile), profile),
-    ),
+    ConfigProvider.layer(withProfileOverride(config.provider, profile)),
+    secretsEnvironmentLayer(config),
     Logger.layer([fileLogger("out")], { mergeWithExisting: true }),
     Layer.succeed(Stage, stage),
   );
